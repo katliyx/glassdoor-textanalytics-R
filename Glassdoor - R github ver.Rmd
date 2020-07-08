@@ -1,0 +1,1235 @@
+---
+title: "Glassdoor Comments and Ratings Analysis"
+author: "Katherine Li"
+output:
+  distill::distill_article:
+    toc: true
+    toc_depth: 5
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+# I. Project Description
+
+This project is based on a dataset from Glass Door. It is built for various purposes: <br>
+***(1) Exploration about the unigram term frequency, tf-idf, and bigram presence of the text in pro reviews, con reviews, and advice.*** <br>
+***(2) What rating type has an outstanding pattern other than the rest and is worthy of further inspection?*** <br>
+***(3) How does the sentiment scores shown in pro reviews, con reviews, and advice affect the rating of interest?***  <br>
+***(4) Topic modelings for pro reviews, con reviews, and advice.*** <br>
+***(5) For the topics modeled, how does rating impact the mapping of such topics?*** <br>
+
+# II. Relevant Packages 
+
+The following packages are called in for this project. 
+
+```{r, warning=FALSE, message=FALSE}
+library(dplyr)
+library(tidyverse)
+library(stringr)
+library(tidytext)
+library(tm)
+library(rmarkdown)
+library(wordcloud2)
+library(lexicon)
+library(textdata)
+library(gganimate)
+library(httr)
+library(textstem)
+library(widyr)
+library(stopwords)
+library(tibble)
+library(NMF)
+library(fmsb)
+library(stm)
+library(ggpubr)
+library(lme4)
+```
+
+# III. The Data
+
+## A. Import & Overview
+
+Load in the data. 
+
+```{r}
+
+load("/Users/katliyx/Documents/SPRING2020/ITAO70250-Unstructured/Homework/HW2/glassDoor.rdata")
+
+rmarkdown::paged_table(glassDoor)
+
+```
+
+There is no NA's in the overall rating. *This might be the rating of interest for further inspection given this perk.* As the numbers of NA entries vary for other types of ratings that include work life rating, culture value rating, career opportunity rating, company benefit rating, and management rating. 
+
+```{r}
+
+summary(glassDoor)
+
+```
+
+## B. Cleaning & Preprocessing
+
+### Missing Values 
+
+Check if there is any missing entries in columns pros, cons, and advice. There are 1831 rows of entries, while there is none missing in column pros and cons; there are 655 NA's in column advice, which is a 35.77% of the total rows of data - this is maybe something that we need to come back to later.
+
+```{r}
+
+sum(is.na(glassDoor$pros))
+sum(is.na(glassDoor$cons))
+sum(is.na(glassDoor$advice))
+
+```
+
+### Data Type
+
+An extra step taken to make sure the data types are in shape for further inspection. 
+
+```{r}
+
+glassDoor <- glassDoor %>%
+  mutate(organization = as.factor(organization)) %>%
+  mutate_at(c("rating", "workLifeRating", "cultureValueRating", "careerOpportunityRating", "compBenefitsRating", "managementRating"), as.numeric)
+
+```
+
+### Issues within the Text in Pros, Cons, and Advice
+
+There are several issues with the text in pros, cons and advice: i.e. some words run together, non-english text and maybe more. These issues need to be addressed since collectively, they might affect the result of text analytics to a certain extent. Plus, stop words are removed for preparation purposes. 
+
+```{r}
+
+#library(stringi)
+
+glassDoor$pros <- str_replace_all(glassDoor$pros, "[^[:alnum:]]", " ") %>% 
+  str_squish(.) %>% 
+  gsub("([a-z])([A-Z])", "\\1 \\2", .) %>% 
+  tm::removeWords(., words = stopwords("en")) %>% 
+  lemmatize_strings(.) %>% 
+  tm::removeNumbers(.)
+
+glassDoor$cons <- str_replace_all(glassDoor$cons, "[^[:alnum:]]", " ") %>% 
+  str_squish(.) %>% 
+  gsub("([a-z])([A-Z])", "\\1 \\2", .) %>% 
+  tm::removeWords(., words = stopwords("en")) %>% 
+  lemmatize_strings(.) %>% 
+  tm::removeNumbers(.)
+
+glassDoor$advice <- str_replace_all(glassDoor$advice, "[^[:alnum:]]", " ") %>% 
+  str_squish(.) %>% 
+  gsub("([a-z])([A-Z])", "\\1 \\2", .) %>% 
+  tm::removeWords(., words = stopwords("en")) %>% 
+  lemmatize_strings(.) %>% 
+  tm::removeNumbers(.)
+
+#glassDoor$pros <- stringi::stri_trans_general(glassDoor$pros, "latin-ascii")
+#glassDoor$cons <- stringi::stri_trans_general(glassDoor$cons, "latin-ascii")
+#glassDoor$advice <- stringi::stri_trans_general(glassDoor$advice, "latin-ascii")
+
+#glassDoor$pros <- iconv(glassDoor$pros, to = "ASCII")
+
+# remove the non-english text in pros, cons, and advice
+
+germanText = grepl("den|der|die|ich", glassDoor$pros)
+germanText = grepl("den|der|die|ich", glassDoor$cons)
+germanText = grepl("den|der|die|ich", glassDoor$advice)
+
+germanRows = which(germanText)
+
+glassDoor = glassDoor[-c(germanRows), ]
+
+```
+
+### Create a new column as ID No.
+
+Just for the convenience in future endeavor. 
+
+```{r}
+
+glassDoor$id <- seq.int(nrow(glassDoor))
+
+```
+
+
+# IV. Word CloudS
+
+To start with, who doesn't love clouds?
+
+## Pros
+
+```{r}
+
+glassDoor %>%
+  dplyr::select(pros) %>%
+  unnest_tokens(word, pros) %>%
+  count(word, sort = TRUE) %>%
+  anti_join(stop_words, by = "word") %>%
+  filter(n>50) %>%
+  na.omit() %>%
+  wordcloud2::wordcloud2(color = "darkseagreen", shape = "circle")
+
+```
+
+## Cons
+
+```{r}
+
+glassDoor %>%
+  dplyr::select(cons) %>%
+  unnest_tokens(word, cons) %>%
+  count(word, sort = TRUE) %>%
+  anti_join(stop_words, by = "word") %>%
+  filter(n>50) %>%
+  na.omit() %>%
+  wordcloud2::wordcloud2(color = "darksalmon", shape = "circle")
+
+```
+
+## Advice 
+
+```{r}
+
+glassDoor %>%
+  dplyr::select(advice) %>%
+ # filter(!is.na(advice)) %>%
+  unnest_tokens(word, advice) %>%
+  count(word, sort = TRUE) %>%
+  anti_join(stop_words, by = "word") %>%
+  filter(n>15) %>%
+  na.omit() %>%
+  wordcloud2::wordcloud2(color = "cadetblue3", shape = "circle")
+
+```
+
+# V. Term Frequency
+
+## Pros
+
+The table shows the top 15 words with highest term frequency in the pro reviews for each organization. Words like "company", "people", "managment" remain high on the list almost for each organization.
+
+```{r, message=FALSE, warning=FALSE}
+
+pro <- glassDoor %>%
+  select(pros, organization) %>%
+  mutate(pros = tolower(pros),
+         pros = lemmatize_strings(pros))
+
+pro2 <- pro %>%
+  unnest_tokens(word, pros) %>%
+  count(organization, word, sort = TRUE) %>%
+  anti_join(stop_words, by = "word")
+
+proTF <- pro %>%
+  split(., .$organization) %>%
+  lapply(., function(x) {
+    prosTokens = tm::MC_tokenizer(x$pros)
+    total = length(prosTokens)
+  })
+
+temppro <- unlist(proTF)
+
+proTF <- data.frame(organization = names(temppro),
+                             total = temppro)
+
+rownames(proTF) <- NULL
+
+proTF <- pro2 %>%
+  left_join(., proTF, by = "organization")
+
+proTF$tfreq <- proTF$n/proTF$total
+
+proTFtop <- proTF %>%
+  group_by(organization) %>%
+  arrange(desc(tfreq)) %>%
+  slice(1:15)
+
+rmarkdown::paged_table(proTFtop)
+
+```
+
+## Cons
+
+The table shows the top 15 words with highest term frequency in the con reviews for each organization. Words like "company", "employee", "managment" remain high on the list almost for each organization - pretty similar to those in the pro reviews. 
+
+```{r, message=FALSE, warning=FALSE}
+
+con <- glassDoor %>%
+  select(cons, organization) %>%
+  mutate(cons = tolower(cons),
+         cons = lemmatize_strings(cons))
+
+con2 <- con %>%
+  unnest_tokens(word, cons) %>%
+  count(organization, word, sort = TRUE) %>%
+  anti_join(stop_words, by = "word")
+
+conTF <- con %>%
+  split(., .$organization) %>%
+  lapply(., function(x) {
+    consTokens = tm::MC_tokenizer(x$cons)
+    total = length(consTokens)
+  })
+
+tempcon <- unlist(conTF)
+
+conTF <- data.frame(organization = names(tempcon),
+                             total = tempcon)
+
+rownames(conTF) <- NULL
+
+conTF <- con2 %>%
+  left_join(., conTF, by = "organization")
+
+conTF$tfreq <- conTF$n/conTF$total
+
+conTFtop <- conTF%>%
+  group_by(organization) %>%
+  arrange(desc(tfreq)) %>%
+  slice(1:15)
+
+rmarkdown::paged_table(conTFtop)
+
+```
+
+## Advice 
+
+There are plenty NA's in the column advice. Establishing the term frequency table without putting these NA's aside would result in NA being of the highest term frequency for all four organizations. Thus,  get rid of those NA's here. <br>
+
+The table shows the top 15 words with highest term frequency in the advice reviews for each organization. The words are practically the same as pro and con reviews for each company; to iterate, they are "company", "employee", "management", and "people". 
+
+
+```{r, message=FALSE, warning=FALSE}
+
+advicedf <- glassDoor %>%
+  select(advice, organization) %>%
+  filter(!is.na(advice)) %>%
+  mutate(advice = tolower(advice),
+         advice = lemmatize_strings(advice))
+
+advicedf2 <- advicedf %>%
+  unnest_tokens(word, advice) %>%
+  count(organization, word, sort = TRUE) %>%
+  anti_join(stop_words, by = "word")
+
+adviceTF <- advicedf %>%
+  split(., .$organization) %>%
+  lapply(., function(x) {
+    adviceTokens = tm::MC_tokenizer(x$advice)
+    total = length(adviceTokens)
+  })
+
+tempadvice <- unlist(adviceTF)
+
+adviceTF <- data.frame(organization = names(tempadvice),
+                             total = tempadvice)
+
+rownames(adviceTF) <- NULL
+
+adviceTF <- advicedf2 %>%
+  left_join(., adviceTF, by = "organization")
+
+adviceTF$tfreq <- adviceTF$n/adviceTF$total
+
+adviceTFtop <- adviceTF %>%
+  group_by(organization) %>%
+  arrange(desc(tfreq)) %>%
+  slice(1:15)
+
+rmarkdown::paged_table(adviceTFtop)
+
+```
+
+# VI. tf-idf 
+
+In addition to term frequency, tf-idf is another valued concept to look at because it implies the words with greater importance as to the document. <br>
+
+## Pros
+
+This table shows the top 10 most "important" words in the pro reviews for each organization. 
+
+```{r}
+
+#proIDF <- proTF %>%
+#  group_by(word) %>%
+#  count() %>%
+#  mutate(idf = log(length(unique(proTF$organization))/n)) %>%
+#  arrange(desc(idf))
+
+# rmarkdown::paged_table(proIDF)
+
+proTFIDF <- proTF %>%
+  tidytext::bind_tf_idf(word, organization, n) %>%
+  arrange(desc(tf_idf)) %>%
+  select(-tfreq)
+
+# overall
+# proTFIDF
+
+proTFIDFtop <- proTFIDF %>%
+  group_by(organization) %>%
+  arrange(desc(tf_idf)) %>%
+  slice(1:10)
+
+rmarkdown::paged_table(proTFIDFtop)
+
+```
+
+## Cons
+
+This table shows the top 10 most "important" words in the con reviews for each organization. Interesting to see words like "bill" and "budget" pop up.  
+
+```{r}
+
+conTFIDF <- conTF %>%
+  tidytext::bind_tf_idf(word, organization, n) %>%
+  arrange(desc(tf_idf)) %>%
+  select(-tfreq)
+
+conTFIDFtop <- conTFIDF %>%
+  group_by(organization) %>%
+  arrange(desc(tf_idf)) %>%
+  slice(1:10)
+
+rmarkdown::paged_table(conTFIDFtop)
+
+```
+
+## Advice
+
+This table shows the top 10 most "important" words in the advice for each organization. 
+
+```{r}
+
+adviceTFIDF <- adviceTF %>%
+  tidytext::bind_tf_idf(word, organization, n) %>%
+  arrange(desc(tf_idf)) %>%
+  select(-tfreq)
+
+adviceTFIDFtop <- adviceTFIDF %>%
+  group_by(organization) %>%
+  arrange(desc(tf_idf)) %>%
+  slice(1:10)
+
+rmarkdown::paged_table(adviceTFIDFtop)
+
+```
+
+# VII. N-grams (Bigrams)
+
+## Pros
+
+This table shows the bigrams with the highest presence in pro reviews, such as "life balance", "learn lot", "opportunity learn", and "lot opportunity".
+
+```{r}
+
+proBigram <- glassDoor %>%
+  select(organization, pros) %>%
+  mutate(pros = tolower(pros)) %>%
+  mutate(pros = lemmatize_strings(pros)) %>%
+  unnest_tokens(bigram, pros, token = "ngrams", n = 2)
+
+proBigram2 <- proBigram %>%
+  separate(bigram, c("word1", "word2"), sep = " ")
+
+proBigram3 <- proBigram2 %>%
+  filter(!(word1 %in% stop_words$word)) %>% 
+  filter(!(word2 %in% stop_words$word))
+
+proBigramFinal <- proBigram3 %>%
+  unite(bigram, word1, word2, sep = " ") %>%
+  count(bigram, sort = TRUE)
+
+rmarkdown::paged_table(proBigramFinal)
+
+```
+
+## Cons
+
+This table shows the bigrams with the highest presence in con reviews. "Life balance", "senior management" show up again. And "low pay" and "low salary" are quite expected on this list. 
+
+```{r}
+
+conBigram <- glassDoor %>%
+  select(organization, cons) %>%
+  mutate(cons = tolower(cons)) %>%
+  mutate(cons = lemmatize_strings(cons)) %>%
+  unnest_tokens(bigram, cons, token = "ngrams", n = 2)
+
+conBigram2 <- conBigram %>%
+  separate(bigram, c("word1", "word2"), sep = " ")
+
+conBigram3 <- conBigram2 %>%
+  filter(!(word1 %in% stop_words$word)) %>% 
+  filter(!(word2 %in% stop_words$word))
+
+conBigramFinal <- conBigram3 %>%
+  unite(bigram, word1, word2, sep = " ") %>%
+  count(bigram, sort = TRUE)
+
+rmarkdown::paged_table(conBigramFinal)
+
+```
+
+## Advice
+
+This table shows the bigrams with the highest presence in advice; interesting to see bigrams like "treat employee", "care employee", "listen employee", "pay attention", and "hr policy". 
+
+```{r}
+
+adviceBigram <- glassDoor %>%
+  select(organization, advice) %>%
+  filter(!is.na(advice)) %>% # get rid of the NA's
+  mutate(advice = tolower(advice)) %>%
+  mutate(advice = lemmatize_strings(advice)) %>%
+  unnest_tokens(bigram, advice, token = "ngrams", n = 2)
+
+adviceBigram2 <- adviceBigram %>%
+  separate(bigram, c("word1", "word2"), sep = " ")
+
+adviceBigram3 <- adviceBigram2 %>%
+  filter(!(word1 %in% stop_words$word)) %>% 
+  filter(!(word2 %in% stop_words$word))
+
+adviceBigramFinal <- adviceBigram3 %>%
+  unite(bigram, word1, word2, sep = " ") %>%
+  count(bigram, sort = TRUE)
+
+rmarkdown::paged_table(adviceBigramFinal)
+
+```
+
+# VIII. A Peak into All the Ratings 
+
+To get a basic idea the average of all ratings (overall rating, work life rating, culture value rating, career opporunity rating, company benefit rating, and management rating) by organization/company, the following plot is generated. This step is conducted to see if any type of rating stands out, and is worthy of further inspection of the relationship between THE rating and sentiment/topic modeling. <br>
+<br>
+
+**From the result, we could see that the averages of all ratings are look alike to each other for each organization. Thus, the OVERALL RATING is picked as the factor to be of further inspection as this project proceeds.**
+
+```{r}
+
+avg_rating <- glassDoor %>%
+  group_by(organization) %>%
+  summarize(rating_avg = round(mean(rating, na.rm = TRUE), 2),
+            workLifeRating_avg = round(mean(workLifeRating, na.rm = TRUE), 2),
+            cultureValueRating_avg = round(mean(cultureValueRating, na.rm = TRUE), 2),
+            careerOpportunityRating_avg = round(mean(careerOpportunityRating, na.rm = TRUE), 2),
+            compBenefitsRating_avg = round(mean(compBenefitsRating, na.rm = TRUE), 2),
+            managementRating_avg = round(mean(managementRating, na.rm = TRUE), 2))
+
+set.seed(1234)
+
+avg_rating_temp <- avg_rating %>% remove_rownames %>% column_to_rownames(var = "organization") %>%
+  as.data.frame() 
+
+avg_rating_temp <- rbind(rep(5,5), rep(0,5), avg_rating_temp)
+
+radarchart(avg_rating_temp, axistype = 1, cglcols = "grey", cglty=1, axislabcol="grey", caxislabels=seq(0,20,5), cglwd=0.8, vlcex = 0.7)
+
+
+```
+
+# IX. Sentiment Analysis
+
+**"nrc" lexicon** is utilized here to conduct the sentiment analysis. <br>
+
+*Preparation work*
+
+```{r}
+
+#get_sentiments("nrc")
+
+nrcWord <- textdata::lexicon_nrc()
+nrcValues <- lexicon::hash_sentiment_nrc
+
+# average sentiment per id in cons
+conSenti <- glassDoor %>%
+  select(cons, rating, organization, id) %>%
+  unnest_tokens(tbl = ., output = word, input = cons) %>%
+  inner_join(nrcValues, by = c('word' = 'x')) %>%
+  group_by(id) %>%
+  summarise(con_sentiment = round(mean(y),2))
+
+#Average sentiment per id in pros
+
+proSenti <- glassDoor %>%
+  select(pros, rating, organization, id) %>%
+  unnest_tokens(tbl = ., output = word, input = pros) %>%
+  inner_join(nrcValues, by = c('word' = 'x')) %>%
+  group_by(id) %>%
+  summarise(pro_sentiment = round(mean(y),2))
+
+# Average sentiment per id in advice
+
+adviceSenti <- glassDoor %>%
+  select(advice, rating, organization, id) %>%
+  unnest_tokens(tbl = ., output = word, input = advice) %>%
+  inner_join(nrcValues, by = c('word' = 'x')) %>%
+  group_by(id) %>%
+  summarise(advice_sentiment = round(mean(y),2))
+
+```
+
+*Merge the three tables together.*
+
+```{r}
+glassDoor2 <- glassDoor %>%
+  left_join(conSenti, by = "id") %>%
+  left_join(proSenti, by = "id") %>%
+  left_join(adviceSenti, by = "id")
+
+```
+
+*Get the table of the average sentiment per organization by pros, cons, and advice*
+
+**From the table, we could see that just as expected the average sentiment scores assigned to the con reviews are much lower than those assigned to pro reviews and advice for every organization. The sentiment scores reflected from advice are slightly lower than the scores for pro reviews for every organization - which makes sense since the tone used to write advice tends to be more neutral from common sense.** <br>
+
+**Specifically, ORGC has the lowest sentiment scores (towards negativity) in both con and pro reivews. The sentiment for advice is most negative/lowest for ORGB, but it is one of the two organizations with the highest sentiment scores in pro reviews.**
+
+```{r}
+
+avgSenti <- glassDoor2 %>%
+  group_by(organization) %>%
+  summarize (con_sentiment_avg = round(mean(con_sentiment, na.rm = TRUE), 2),
+             pro_sentiment_avg = round(mean(pro_sentiment, na.rm = TRUE), 2),
+             advice_sentiment_avg = round(mean(advice_sentiment, na.rm = TRUE), 2))
+
+rmarkdown::paged_table(avgSenti)
+
+# merge the table showing the average ratings by organization and this table showing the average sentiment scores of pros, cons, and advice by organization
+glassDoor_org <- avgSenti %>%
+  left_join(avg_rating, by = "organization") %>%
+  mutate(organization = as.factor(organization))
+
+```
+
+# X. A Peak into All the Ratings 
+
+To get a basic idea the average of all ratings (overall rating, work life rating, culture value rating, career opporunity rating, company benefit rating, and management rating) by organization/company, the following plot is generated. This step is conducted to see if any type of rating stands out, and is worthy of further inspection of the relationship between THE rating and sentiment/topic modeling. <br>
+<br>
+
+**From the result, we could see that the averages of all ratings are look alike to each other for each organization. Thus, the OVERALL RATING is picked as the factor to be of further inspection as this project proceeds.**
+
+```{r}
+
+avg_rating <- glassDoor %>%
+  group_by(organization) %>%
+  summarize(rating_avg = round(mean(rating, na.rm = TRUE), 2),
+            workLifeRating_avg = round(mean(workLifeRating, na.rm = TRUE), 2),
+            cultureValueRating_avg = round(mean(cultureValueRating, na.rm = TRUE), 2),
+            careerOpportunityRating_avg = round(mean(careerOpportunityRating, na.rm = TRUE), 2),
+            compBenefitsRating_avg = round(mean(compBenefitsRating, na.rm = TRUE), 2),
+            managementRating_avg = round(mean(managementRating, na.rm = TRUE), 2))
+
+set.seed(1234)
+
+avg_rating_temp <- avg_rating %>% remove_rownames %>% column_to_rownames(var = "organization") %>%
+  as.data.frame() 
+
+avg_rating_temp <- rbind(rep(5,5), rep(0,5), avg_rating_temp)
+
+radarchart(avg_rating_temp, axistype = 1, cglcols = "grey", cglty=1, axislabcol="grey", caxislabels=seq(0,20,5), cglwd=0.8, vlcex = 0.7)
+
+
+```
+
+# XI. How does sentiment impact the rating?
+
+## Model 1
+
+*From the output of this mode, we could see that pro sentiment and advice sentiment have significant impact on the rating; while con sentiment also impacts rating significantly but probably not on par with the effect from pro and advice.*
+
+```{r}
+
+glassDoor_mod <- glassDoor %>%
+  left_join(conSenti, by = "id") %>%
+  left_join(proSenti, by = "id") %>%
+  left_join(adviceSenti, by = "id") 
+
+mod1 <- lm(rating ~ pro_sentiment + con_sentiment+ advice_sentiment + organization, data = glassDoor_mod)
+
+summary(mod1)
+```
+
+## Model 2
+
+### Normal Distribution Test 
+
+*To test the if the distribution of the dependent variable is normal.*
+
+Well... it might seem a bit far-fetched to do the mixed model on this issue as the normality of the distribution of rating appears as follows. 
+
+```{r}
+
+ggdensity(glassDoor_mod$rating, fill = "lightgrey")
+
+ggqqplot(glassDoor_mod$rating)
+
+```
+
+### The Actual Model 
+
+*A mixed model approach.* <br>
+
+From the estimate of the variance explained by the random effect - it is indistinguishable from zero, so random effect probably doesn't matter and a regular linear model will serve the purpose here instead. From the estimate of the fixed effect, we can see that the rating does differ given different pro, con, and advice sentiment. In other words, sentiment from pro, con, and advice all impact the rating. 
+
+```{r, warning=FALSE, message=FALSE}
+
+mod2 <- lmer(rating ~ pro_sentiment + con_sentiment + advice_sentiment + (1|organization), data = glassDoor_mod, REML = FALSE)
+
+summary(mod2)
+
+```
+
+# XII. Topic Models 
+
+*Preparation work*
+
+```{r}
+
+tmA <- glassDoor %>%
+  filter(organization == "ORGA") %>%
+  summarise(organization = "ORGA",
+            pros = paste(pros, collapse = " "),
+            cons = paste(cons, collapse = " "),
+            advice = paste(advice, collapse = " "),
+            rating = mean(rating, na.rm = TRUE))
+
+tmB <- glassDoor %>%
+  filter(organization == "ORGB") %>%
+  summarise(organization = "ORGB",
+            pros = paste(pros, collapse = " "),
+            cons = paste(cons, collapse = " "),
+            advice = paste(advice, collapse = " "),
+            rating = mean(rating, na.rm = TRUE))
+
+tmC <- glassDoor %>%
+  filter(organization == "ORGC") %>%
+  summarise(organization = "ORGC",
+            pros = paste(pros, collapse = " "),
+            cons = paste(cons, collapse = " "),
+            advice = paste(advice, collapse = " "),
+            rating = mean(rating, na.rm = TRUE))
+
+tmD <- glassDoor %>%
+  filter(organization == "ORGD") %>%
+  summarise(organization = "ORGD",
+            pros = paste(pros, collapse = " "),
+            cons = paste(cons, collapse = " "),
+            advice = paste(advice, collapse = " "),
+            rating = mean(rating, na.rm = TRUE))
+
+glassDoor_tm <- rbind(tmA, tmB, tmC, tmD)
+
+```
+
+## Pro Reviews
+
+*Preparation work*
+
+```{r}
+pro_tm <- glassDoor_tm %>% as.data.frame()
+colnames(pro_tm) <- c("doc_id", "text", "rating")
+proCorpus = Corpus(DataframeSource(pro_tm))
+
+proTDM <- TermDocumentMatrix(proCorpus, control = list(weighting = 
+                                                         function(x)
+                                                           weightTfIdf(x, normalize = FALSE)))
+
+inspect(proTDM)
+                             
+
+```
+
+```{r}
+
+proConvert <- as.data.frame(as.matrix(proTDM))
+
+proTibble = as_tibble(proConvert, .name_repair = "universal")
+
+proTibble <- proTibble %>%
+  mutate_all(., funs(. + .1))
+
+rownames(proTibble) <- rownames(proConvert)
+
+proNMF <- nmf(proTibble, 4, seed = 1001)
+
+save(proNMF, file = "/Users/katliyx/Documents/SPRING2020/ITAO70250-Unstructured/Homework/HW2/nmfOut.Rata")
+
+load("/Users/katliyx/Documents/SPRING2020/ITAO70250-Unstructured/Homework/HW2/nmfOut.Rata")
+
+wMatrix = as.data.frame(basis(proNMF))
+
+head(wMatrix[order(-wMatrix$V1), ], 5)
+
+head(wMatrix[order(-wMatrix$V2), ], 5)
+
+head(wMatrix[order(-wMatrix$V3), ], 5)
+
+head(wMatrix[order(-wMatrix$V4), ], 5)
+
+set.seed(1001)
+
+holdoutRows <- sample(1:nrow(glassDoor_mod), 100, replace = FALSE)
+
+pro_text <- textProcessor(documents = glassDoor_mod$pros[-c(holdoutRows)],
+                          metadata = glassDoor_mod[-c(holdoutRows), ],
+                          stem = FALSE)
+```
+
+```{r}
+
+pro_prep = prepDocuments(documents=pro_text$documents,
+                         vocab = pro_text$vocab,
+                         meta = pro_text$meta)
+
+```
+
+To determine the best number of topics, focus on the semantic coherence and the residuals. Semantic coherence means how well the words hang together – computed from taking a conditional probability score from frequent words; it is essentially a measure of human interpretability. Thus, low residual and high semantic coherence is preferred. In this case, as k passes 5, the residuals seemingly take a sharp dive as k increases. Thus, choose 5 as the k. 
+
+```{r}
+ktest = searchK(documents = pro_prep$documents,
+                vocab = pro_prep$vocab, 
+                K = c(3, 4, 5, 10, 20), verbose = FALSE)
+
+plot(ktest)
+```
+
+Wih the 5 topics in hand, compute the actual model. The expected topic proportion plot is as follows. Here, topic 4 has the highest expected topic proportion, which kind of makes sense in real life context: as this is the topic modeling on the pro reviews, it is reasonable for words like great, work, company to be included in the highest mentioned topic. 
+
+```{r}
+
+topics5 <- stm(documents = pro_prep$documents,
+               vocab = pro_prep$vocab, seed = 1001,
+               K = 5, verbose = FALSE)
+
+plot(topics5)
+```
+
+Now, see what emerges from the topics in details. FREX words are probably what we should focus on here, since they occur frequently within the topic and are exclusive to that topic. Here, in topic 4: FEEX words are great, company, learn, environment, get, life, salary - which are all rational for pro reviews. Also, the highest probability words are worthy of attention because there are the words with the highest probability of occuring within that topic. Here, under topic 4, highest probability words are: work, great, company, learn, environment, get, project - which are in high accordance with the FEEX words. 
+
+```{r}
+
+labelTopics(topics5)
+
+```
+
+Now, see what reviews that have higher probabilities of being associated with each topic. 
+
+```{r}
+
+findThoughts(topics5, texts = pro_prep$meta$pros, n = 1)
+
+```
+
+Next step, since topic models are probablistic, compute he probabilities of each document belonging to a topic. 
+
+```{r}
+
+head(topics5$theta, 15)
+
+```
+
+Since topic models, on the other hand, are great for predicting topic probabilities for unseen document. 
+
+```{r}
+
+newprotext = textProcessor(documents = glassDoor_mod$pros[holdoutRows],
+                           metadata = glassDoor_mod[holdoutRows, ], 
+                           stem = FALSE)
+
+newprocorp = alignCorpus(new = newprotext, old.vocab = topics5$vocab)
+
+newprofitted = fitNewDocuments(model = topics5, documents = newprocorp$documents,
+                               newData = newprocorp$meta, origData = pro_prep$meta)
+
+```
+
+## Con Reviews 
+
+*Preparation work*
+
+```{r}
+
+con_tm <- glassDoor_tm %>% as.data.frame()
+colnames(con_tm) <- c("doc_id", "text", "rating")
+conCorpus = Corpus(DataframeSource(con_tm))
+
+conTDM <- TermDocumentMatrix(conCorpus, control = list(weighting = 
+                                                         function(x)
+                                                           weightTfIdf(x, normalize = FALSE)))
+
+inspect(conTDM)
+                             
+
+```
+
+```{r}
+
+conConvert <- as.data.frame(as.matrix(conTDM))
+
+conTibble = as_tibble(conConvert, .name_repair = "universal")
+
+conTibble <- conTibble %>%
+  mutate_all(., funs(. + .1))
+
+rownames(conTibble) <- rownames(conConvert)
+
+conNMF <- nmf(conTibble, 4, seed = 1001)
+
+save(conNMF, file = "/Users/katliyx/Documents/SPRING2020/ITAO70250-Unstructured/Homework/HW2/nmfOut2.Rata")
+
+load("/Users/katliyx/Documents/SPRING2020/ITAO70250-Unstructured/Homework/HW2/nmfOut2.Rata")
+
+wMatrix2 = as.data.frame(basis(conNMF))
+
+head(wMatrix2[order(-wMatrix2$V1), ], 5)
+
+head(wMatrix2[order(-wMatrix2$V2), ], 5)
+
+head(wMatrix2[order(-wMatrix2$V3), ], 5)
+
+head(wMatrix2[order(-wMatrix2$V4), ], 5)
+
+set.seed(1001)
+
+holdoutRows <- sample(1:nrow(glassDoor_mod), 100, replace = FALSE)
+
+con_text <- textProcessor(documents = glassDoor_mod$cons[-c(holdoutRows)],
+                          metadata = glassDoor_mod[-c(holdoutRows), ],
+                          stem = FALSE)
+```
+
+```{r}
+
+con_prep = prepDocuments(documents=con_text$documents,
+                         vocab = con_text$vocab,
+                         meta = con_text$meta)
+
+```
+
+In this case, as k passes 5, the residuals seemingly take a sharp dive as k increases. Thus, choose 5 as the k - yet again. 
+
+```{r}
+ktest2 = searchK(documents = con_prep$documents,
+                vocab = con_prep$vocab, 
+                K = c(3, 4, 5, 10, 20), verbose = FALSE)
+
+plot(ktest2)
+```
+
+Wih the 5 topics in hand, compute the actual model. The expected topic proportion plot is as follows. Here, topic 5 has the highest expected topic proportion, which contains words like company, good and much. Here "good" appears to be a bit dubious. The topic with the second highest expected proportion is topic 1. 
+
+```{r}
+
+topics5_2 <- stm(documents = con_prep$documents,
+               vocab = con_prep$vocab, seed = 1001,
+               K = 5, verbose = FALSE)
+
+plot(topics5_2)
+```
+
+Now, see what emerges from the topics in details. FREX words are probably what we should focus on here, since they occur frequently within the topic and are exclusive to that topic. Here, in topic 5: FEEX words are company, good, lack, little, need, low, business - with the presence of words like "lack" and "need", this topic being expected of high proportion is more rational now. Also, the highest probability words are worthy of attention because there are the words with the highest probability of occuring within that topic. Again, under topic 4, highest probability words are: company, good, much, lack, little, need, low. Here, the addition of "low" just makes more sense of topic 5's pertaining to con reviews.
+
+```{r}
+
+labelTopics(topics5_2)
+
+```
+
+Now, see what reviews that have higher probabilities of being associated with each topic. 
+
+```{r}
+
+findThoughts(topics5_2, texts = con_prep$meta$cons, n = 1)
+
+```
+
+Next step, since topic models are probablistic, compute he probabilities of each document belonging to a topic. 
+
+```{r}
+
+head(topics5_2$theta, 15)
+
+```
+
+## As for the advice reviews...
+
+*Preparation work*
+
+```{r}
+
+advice_tm <- glassDoor_tm %>% as.data.frame()
+colnames(advice_tm) <- c("doc_id", "text", "rating")
+adviceCorpus = Corpus(DataframeSource(advice_tm))
+
+adviceTDM <- TermDocumentMatrix(adviceCorpus, control = list(weighting = 
+                                                         function(x)
+                                                           weightTfIdf(x, normalize = FALSE)))
+
+inspect(adviceTDM)
+                             
+
+```
+
+```{r}
+
+adviceConvert <- as.data.frame(as.matrix(adviceTDM))
+
+adviceTibble = as_tibble(adviceConvert, .name_repair = "universal")
+
+adviceTibble <- adviceTibble %>%
+  mutate_all(., funs(. + .1))
+
+rownames(adviceTibble) <- rownames(adviceConvert)
+
+adviceNMF <- nmf(adviceTibble, 4, seed = 1001)
+
+save(adviceNMF, file = "/Users/katliyx/Documents/SPRING2020/ITAO70250-Unstructured/Homework/HW2/nmfOut3.Rata")
+
+load("/Users/katliyx/Documents/SPRING2020/ITAO70250-Unstructured/Homework/HW2/nmfOut3.Rata")
+
+wMatrix3 = as.data.frame(basis(adviceNMF))
+
+head(wMatrix3[order(-wMatrix3$V1), ], 5)
+
+head(wMatrix3[order(-wMatrix3$V2), ], 5)
+
+head(wMatrix3[order(-wMatrix3$V3), ], 5)
+
+head(wMatrix3[order(-wMatrix3$V4), ], 5)
+
+set.seed(1001)
+
+holdoutRows <- sample(1:nrow(glassDoor_mod), 100, replace = FALSE)
+
+advice_text <- textProcessor(documents = glassDoor_mod$advice[-c(holdoutRows)],
+                          metadata = glassDoor_mod[-c(holdoutRows), ],
+                          stem = FALSE)
+```
+
+```{r}
+
+advice_prep = prepDocuments(documents=advice_text$documents,
+                         vocab = advice_text$vocab,
+                         meta = advice_text$meta)
+
+```
+
+In this case, as k passes 5, the residuals seemingly take a sharp dive as k increases - that drop is pretty spectacular. Thus, choose 5 as the k - again and again. 
+
+```{r}
+ktest3 = searchK(documents = advice_prep$documents,
+                vocab = advice_prep$vocab, 
+                K = c(3, 4, 5, 10, 20), verbose = FALSE)
+
+plot(ktest3)
+```
+
+For comments in the advice column, topic 3 has the highest expected topic proportion, and topic 5 follows. It is interesting to see words like "train" pop up since implication as "training opportunities" is pertinent to advice from many perspectives. 
+
+```{r}
+
+topics5_3 <- stm(documents = advice_prep$documents,
+               vocab = advice_prep$vocab, seed = 1001,
+               K = 5, verbose = FALSE)
+
+plot(topics5_3)
+```
+
+Now, see what emerges from the topics in details. FREX words are probably what we should focus on here, since they occur frequently within the topic and are exclusive to that topic. Here, in topic 3: FEEX words are good, work, company, need, get, take, manager. "Need" really tells something about advice. Also, the highest probability words are worthy of attention because there are the words with the highest probability of occuring within that topic. Again, under topic 3, highest probability words are: employee, good, work, company, need, get, take. Here, high probability words kind of echo with the FREX words. 
+
+```{r}
+
+labelTopics(topics5_3)
+
+```
+
+Now, see what reviews that have higher probabilities of being associated with each topic. 
+
+```{r}
+
+findThoughts(topics5_3, texts = advice_prep$meta$advice, n = 1)
+
+```
+
+Next step, since topic models are probablistic, compute he probabilities of each document belonging to a topic. 
+
+```{r}
+
+head(topics5_3$theta, 15)
+
+```
+
+
+# XIII. How does rating contribute to the mapping of topics?
+
+## Pro Reviews
+
+*Preparation work*
+
+```{r}
+
+glassDoor3 <- glassDoor_mod %>%
+  drop_na(rating)
+
+predictortext <- textProcessor(documents = glassDoor3$pros,
+                               metadata = glassDoor3,
+                               stem = FALSE)
+
+proprep2 <- prepDocuments(documents = predictortext$documents,
+                          vocab = predictortext$vocab,
+                          meta = predictortext$meta)
+```
+
+**The Prediction Models** <br>
+
+For the topics of pro reviews, we could see that rating has significant impact on topics 1, 5, and on topic 4. 
+
+```{r}
+
+topicpredictor = stm(documents = proprep2$documents,
+                     vocab = proprep2$vocab, prevalence = ~rating,
+                     data = proprep2$meta, K = 5, verbose = FALSE)
+
+proratingeffect = estimateEffect(1:5 ~ rating, stmobj = topicpredictor,
+                                 metadata = proprep2$meta)
+
+summary(proratingeffect, topics = c(1:5))
+
+```
+
+**The Plots.** <br>
+
+Here, in each plot for each topic, the x-axes denote the ratings while the y-axes denote the corresponding expected topic proportion. As the rating decreases, the contents of pro reviews are mostly likely to fall under topic 3 (notice that there are words like "small", which might imply "small company" or "small team", which might work adversely when it comes to rating), then topic 5. As the rating increases, the contents of pro reviews tend to fall under topic 2.
+
+```{r}
+
+plot.estimateEffect(proratingeffect, "rating", method = "continuous", model = topicpredictor, topics = 1, labeltype = "frex")
+
+plot.estimateEffect(proratingeffect, "rating", method = "continuous", model = topicpredictor, topics = 2, labeltype = "frex")
+
+plot.estimateEffect(proratingeffect, "rating", method = "continuous", model = topicpredictor, topics = 3, labeltype = "frex")
+
+plot.estimateEffect(proratingeffect, "rating", method = "continuous", model = topicpredictor, topics = 4, labeltype = "frex")
+
+plot.estimateEffect(proratingeffect, "rating", method = "continuous", model = topicpredictor, topics = 5, labeltype = "frex")
+
+```
+
+## Con Reviews 
+
+*Preparation work*
+
+```{r}
+
+predictortext2 <- textProcessor(documents = glassDoor3$cons,
+                               metadata = glassDoor3,
+                               stem = FALSE)
+
+conprep2 <- prepDocuments(documents = predictortext2$documents,
+                          vocab = predictortext2$vocab,
+                          meta = predictortext2$meta)
+```
+
+**The Prediction Models** <br>
+
+For the topics of pro reviews, we could see that rating has significant impact on all topics from 1 to 5. 
+
+```{r}
+
+topicpredictor2 = stm(documents = conprep2$documents,
+                     vocab = conprep2$vocab, prevalence = ~rating,
+                     data = conprep2$meta, K = 5, verbose = FALSE)
+
+conratingeffect = estimateEffect(1:5 ~ rating, stmobj = topicpredictor2,
+                                 metadata = conprep2$meta)
+
+summary(conratingeffect, topics = c(1:5))
+
+```
+
+**The Plots.** <br>
+
+Here, in each plot for each topic, the x-axes denote the ratings while the y-axes denote the corresponding expected topic proportion. As the rating increases, the con reviews are most likely to fall under topic 1; as the rating decreases, the con reviews are most likely to fall under topic 3.
+
+```{r}
+
+plot.estimateEffect(conratingeffect, "rating", method = "continuous", model = topicpredictor, topics = 1, labeltype = "frex")
+
+plot.estimateEffect(conratingeffect, "rating", method = "continuous", model = topicpredictor, topics = 2, labeltype = "frex")
+
+plot.estimateEffect(conratingeffect, "rating", method = "continuous", model = topicpredictor, topics = 3, labeltype = "frex")
+
+plot.estimateEffect(conratingeffect, "rating", method = "continuous", model = topicpredictor, topics = 4, labeltype = "frex")
+
+plot.estimateEffect(conratingeffect, "rating", method = "continuous", model = topicpredictor, topics = 5, labeltype = "frex")
+
+```
+
+## Again, for the advice...
+
+*Preparation work*
+
+```{r}
+
+predictortext3 <- textProcessor(documents = glassDoor3$advice,
+                               metadata = glassDoor3,
+                               stem = FALSE)
+
+adviceprep2 <- prepDocuments(documents = predictortext3$documents,
+                          vocab = predictortext3$vocab,
+                          meta = predictortext3$meta)
+```
+
+**The Prediction Models** <br>
+
+For the topics of advice, we could see that rating has significant impact on topics 2, 3, 4, and 5. Rating also has impact on topic 1, but probably not that significant compared with the rest.
+
+```{r}
+
+topicpredictor3 = stm(documents = adviceprep2$documents,
+                     vocab = adviceprep2$vocab, prevalence = ~rating,
+                     data = adviceprep2$meta, K = 5, verbose = FALSE)
+
+adviceratingeffect = estimateEffect(1:5 ~ rating, stmobj = topicpredictor3,
+                                 metadata = adviceprep2$meta)
+
+summary(adviceratingeffect, topics = c(1:5))
+
+```
+
+**The Plots.** <br>
+
+Here, in each plot for each topic, the x-axes denote the ratings while the y-axes denote the corresponding expected topic proportion. As the rating increases, the advice contents is likely to fall under topic 5. As the rating gets lower, the advice contents is likely to fall under topic 4 and then topic 2, with a small difference in the expected topic proportion.
+
+```{r}
+
+plot.estimateEffect(adviceratingeffect, "rating", method = "continuous", model = topicpredictor, topics = 1, labeltype = "frex")
+
+plot.estimateEffect(adviceratingeffect, "rating", method = "continuous", model = topicpredictor, topics = 2, labeltype = "frex")
+
+plot.estimateEffect(adviceratingeffect, "rating", method = "continuous", model = topicpredictor, topics = 3, labeltype = "frex")
+
+plot.estimateEffect(adviceratingeffect, "rating", method = "continuous", model = topicpredictor, topics = 4, labeltype = "frex")
+
+plot.estimateEffect(adviceratingeffect, "rating", method = "continuous", model = topicpredictor, topics = 5, labeltype = "frex")
+
+```
+
+# XIV. Conclusion 
+
+To answer the questions raised earlier in the introduction. <br>
+***(1) The words with highest term frequencies appear similar in pro reviews, con reviews, and advice for the four organizations. However, the unigrams of higher tf-idf's differ in pros, cons, and advice for every organization. Bigrams with higher presence differ for pro reviews, con reviews, and advice.*** <br>
+***(2) Overall rating is the factor of interest to investigate on for this project.*** <br>
+***(3) Sentiment reflected in pros, cons, and advice all impact the overall rating.*** <br>
+***(4) Topic modelings for pro reviews, con reviews, and advice appear rational to some extent. For details, please refer back to the Topic Modeling section.*** <br>
+***(5) Rating does have certain impact in the mapping of topics for pros, cons, and advice.*** <br>
+<br>
+Regrettably, the word clouds seem not to be working that well (reasons to be discovered later). Also, I tried to clean up the German shown in the text, but that seems not to be that thorough as some German pops up in topic modeling.
+
+# XV. Final Thoughts & Limitations & Possible Improvement
+
+Regrettably, the word clouds seem not to be working that well (reasons to be discovered later). Also, I tried to clean up the German shown in the text, but that seems not to be that thorough as some German pops up in topic modeling.
+
